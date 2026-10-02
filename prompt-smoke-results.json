@@ -1,0 +1,20 @@
+[
+  {
+    "input": "Je suis une foret qui respire sous la pluie.",
+    "output": "Lush forest canopy, heavy rain, mist, verdant mossy textures, deep greens, ethereal atmosphere, watercolor wash.",
+    "words": 15,
+    "seconds": 17.2
+  },
+  {
+    "input": "Garde la foret mais transforme les feuilles en verre bleu.",
+    "output": "Rain-drenched forest, translucent blue glass leaves, crystalline textures, deep green moss, moody atmosphere, watercolor wash.",
+    "words": 15,
+    "seconds": 1.58
+  },
+  {
+    "input": "Start over. A red bicycle on the moon, woodcut.",
+    "output": "Red bicycle, lunar surface, craters, stark shadows, bold linework, woodblock print, limited color palette.",
+    "words": 14,
+    "seconds": 1.55
+  }
+]

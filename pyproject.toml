@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mechanical-meanderings"
+version = "0.1.0"
+description = "Local OSC speech-to-visual prompt bridge using Ollama"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["python-osc>=1.9,<2"]
+
+[project.optional-dependencies]
+tui = ["textual>=8.2,<9"]
+dev = ["pytest>=8,<10"]
+
+[project.scripts]
+mechanical-meanderings = "mechanical_meanderings.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["mechanical_meanderings*"]
+
+[tool.setuptools.package-data]
+mechanical_meanderings = ["system.txt"]
