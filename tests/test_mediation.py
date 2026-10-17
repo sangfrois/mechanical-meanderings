@@ -54,7 +54,7 @@ def test_uncertain_speech_preserves_previous_image():
 def test_reply_and_prompt_have_independent_word_budgets():
     from mechanical_meanderings.mediation import parse_decision
     result = parse_decision(json.dumps(judgement(prompt='word ' * 80, reply='reply ' * 100)))
-    assert len(result.prompt.split()) == 20
+    assert len(result.prompt.split()) == 60
     assert len(result.reply.split()) == 28
 
 

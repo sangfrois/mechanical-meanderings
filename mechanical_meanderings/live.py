@@ -119,6 +119,6 @@ class Settings:
 PRESETS = {
     'Model defaults': {},
     'Close reflection': dict(temperature=.35, top_p=.85, top_k=30, repeat_penalty=1.1),
-    'Associative drift': dict(temperature=1.05, top_p=.95, top_k=60, repeat_penalty=1.15),
+    'Associative drift': dict(temperature=1.25, top_p=.95, top_k=60, repeat_penalty=1.15),
     'Wild material': dict(temperature=1.5, top_p=.98, top_k=100, repeat_penalty=1.2),
 }

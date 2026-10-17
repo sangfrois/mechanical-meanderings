@@ -104,6 +104,7 @@ class EngagementState:
             if self.absent_since is not None and now - self.absent_since >= self.absence_reset and not self.absence_cleared:
                 self.generation += 1
                 self.invitation_count = 0
+                self.last_text.clear()
                 self.absence_cleared = True
             if value['people']:
                 if not self.people or self.presence_since is None:

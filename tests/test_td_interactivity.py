@@ -27,14 +27,21 @@ def test_yolo_summary_uses_actual_labels_and_does_not_double_count_pose():
 
 def test_mediation_is_bounded_and_ignored_for_incidental_speech():
     module = helper()
-    morph = SimpleNamespace(par=SimpleNamespace(Auto=True, Amount=1., Warp=.1))
-    unit = SimpleNamespace(par=SimpleNamespace(Controls=True))
-    root = SimpleNamespace(op=lambda name: unit if name == 'interactivity' else morph)
+    morph = SimpleNamespace(par=SimpleNamespace(Auto=True, Amount=1., Warp=.1,
+        Speechamount=1., Speechwarp=.1, Smoothing=4.))
+    stream = SimpleNamespace(par=SimpleNamespace(Tindexblock0step=32, Tindexblock1step=36))
+    unit = SimpleNamespace(par=SimpleNamespace(Enabled=True, Controls=True))
+    nodes = {'interactivity': unit, 'morph_controls': morph, 'StreamDiffusionTD': stream}
+    root = SimpleNamespace(op=nodes.get)
     value = dict(apply_visual=True, controls=dict(amount=.65, warp=.2))
     module.apply_mediation(root, value)
-    assert morph.par.Amount == .65 and morph.par.Warp == .2 and morph.par.Auto is False
+    queued = module._motion
+    assert morph.par.Amount == 1. and morph.par.Warp == .1 and morph.par.Auto is True
+    assert morph.par.Speechamount == 1.  # Receipt queues targets, never snaps a slider.
     module.apply_mediation(root, dict(apply_visual=False, controls=dict(amount=0., warp=0.)))
-    assert morph.par.Amount == .65
+    assert module._motion is queued
+    assert morph.par.Amount == 1.
+    module.close()
 
 
 def test_camera_callback_refuses_non_loopback_or_wrong_port():

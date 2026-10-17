@@ -9,6 +9,7 @@ from pythonosc.osc_server import BlockingOSCUDPServer
 from pythonosc.udp_client import SimpleUDPClient
 from . import StaleGeneration
 from .live import Settings
+from .timing import generation_timing
 
 log = logging.getLogger(__name__)
 
@@ -222,7 +223,10 @@ class Bridge:
                     self.client.send_message(self.trigger_address, 1)
                     self.emit('result', **detail, output=prompt, telemetry=telemetry,
                               elapsed=time.perf_counter() - started, udp_sent=True)
-                    log.info('TX %s %s %.2fs prompt=%r', self.output_target, self.output_address, time.perf_counter() - started, prompt)
+                    log.info('TX %s %s %.2fs prompt=%r; %s', self.output_target, self.output_address,
+                             time.perf_counter() - started, prompt,
+                             generation_timing(telemetry, detail['queue_wait'],
+                                               time.perf_counter() - started, settings.num_predict))
             except StaleGeneration:
                 self.emit('discard', **detail, reason='reset or shutdown', elapsed=time.perf_counter() - started)
                 log.info('Discarded generation superseded by reset or shutdown')
@@ -230,7 +234,9 @@ class Bridge:
                 self.emit('error', **detail, stage=stage, error=type(exc).__name__,
                           output=prompt, telemetry=telemetry, elapsed=time.perf_counter() - started,
                           udp_sent=False)
-                log.error('Generation failed (%s): no completed prompt/trigger send', type(exc).__name__)
+                log.error('Generation failed (%s): no completed prompt/trigger send; %s', type(exc).__name__,
+                          generation_timing(telemetry, detail['queue_wait'],
+                                            time.perf_counter() - started, settings.num_predict))
             finally:
                 if queued:
                     self.pending.task_done()

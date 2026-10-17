@@ -1,0 +1,54 @@
+{
+  "mode": "real bounded streaming HTTP; no OSC or camera",
+  "input": "How do my words and movements influence this installation? Explain without changing the image.",
+  "decision": {
+    "category": "question",
+    "addressed_to_machine": true,
+    "address_confidence": 1.0,
+    "visual_specificity": 0.0,
+    "transformation_intent": 0.0,
+    "preserve_identity": 1.0,
+    "apply_visual": false,
+    "prompt": "",
+    "reply": "Your voice feeds the prompt; your body shapes the pixels.",
+    "rationale": "Explanation of the technical feedback loop.",
+    "controls": null,
+    "needs_camera": false,
+    "typography": {
+      "font": "Consolas",
+      "size": 32,
+      "x": 0.5,
+      "y": 0.5,
+      "align": "center",
+      "italic": false,
+      "bold": false,
+      "tracking": 2,
+      "color": [
+        1,
+        1,
+        1
+      ],
+      "line_width": 40,
+      "decoration": "tilde"
+    }
+  },
+  "elapsed": 6.570182499999646,
+  "telemetry": {
+    "image_attached": false,
+    "frame_status": "not_requested",
+    "camera_requested": false,
+    "interpretation_passes": 1,
+    "http_elapsed": 6.569614500011085,
+    "num_predict_max": 512,
+    "eval_count": 260,
+    "eval_duration": 3710069000,
+    "prompt_eval_count": 3094,
+    "prompt_eval_duration": 1565860000,
+    "total_duration": 6553241300,
+    "load_duration": 2635300,
+    "eval_tokens_per_second": 70.07955916722842,
+    "disco": false,
+    "style_version": 0,
+    "generation_status": "complete"
+  }
+}

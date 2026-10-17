@@ -75,7 +75,7 @@ class MeanderingsApp(App):
                 yield Static('', id='metrics', markup=False)
                 yield Sparkline([], id='latency')
                 yield RichLog(id='trajectory', max_lines=300, wrap=True, markup=False, highlight=False)
-                yield Static('Explore the same words with different controls. Outputs remain capped at 20 words.', id='notice', markup=False)
+                yield Static('Explore the same words with different controls. Interactive visuals target 40–60 words; legacy visuals cap at 20.', id='notice', markup=False)
                 with Horizontal(id='manual-row'):
                     yield Input(placeholder='Manual words / image / correction…', id='manual', max_length=self.bridge.MAX_TEXT)
                     yield Input('ch1' if self.bridge.channel_mode else 'default', id='channel', max_length=32)

@@ -10,9 +10,51 @@ from datetime import datetime
 from pathlib import Path
 
 
+def speech_morph_expressions():
+    p = "op('morph_controls').par."
+    enabled = p + "Speechdrive and op('interactivity').par.Controls"
+    morph = "min(1,max(0,0.5-0.62*math.cos(2*math.pi*absTime.seconds/max(1," + p + "Period)))) if " + p + "Auto else (" + p + "Speechamount if " + enabled + " else " + p + "Amount)"
+    return dict(vec0valuex="max(.5,min(1.,(" + morph + ")))",
+        vec0valuey=p + "Speechwarp if " + enabled + " else " + p + "Warp")
+
+
+def install_speech_controls(root):
+    morph = root.op('morph_controls')
+    page = morph.appendCustomPage('Speech')
+    for name, label in [('Speechdrive', 'Use Speech Morph / Warp'), ('Stepsdrive', 'Speech drives both Step sliders')]:
+        if getattr(morph.par, name, None) is None:
+            p = page.appendToggle(name, label=label)[0]
+            p.default, p.val = True, True
+    for name, label, default, low, high in [
+            ('Speechamount', 'Speech Morph (smoothed)', min(1., max(.5, float(morph.par.Amount))), .5, 1.),
+            ('Speechwarp', 'Speech Warp (smoothed)', float(morph.par.Warp), 0., 1.),
+            ('Smoothing', 'Interpolation seconds', 8., 1., 30.)]:
+        if getattr(morph.par, name, None) is None:
+            p = page.appendFloat(name, label=label)[0]
+            p.default, p.val = default, default
+            p.min, p.max, p.clampMin, p.clampMax = low, high, True, True
+    for name in ('Amount', 'Speechamount'):
+        p = morph.par[name]
+        p.min, p.normMin, p.max, p.normMax = .5, .5, 1., 1.
+        p.clampMin, p.clampMax = True, True
+    for name, expression in speech_morph_expressions().items():
+        root.op('source_morph').par[name].expr = expression
+    callback = root.op('StreamDiffusionTD/parexec_Updatelive')
+    original = '\t\tlo = seq[idx - 1].par.Step.eval() + 1 if idx > 0 else None\n\t\thi = seq[idx + 1].par.Step.eval() - 1 if idx < seq.numBlocks - 1 else None'
+    bounded = '\t\tlo = max(1 if idx == 0 else 2 if idx == 1 else 1, seq[idx - 1].par.Step.eval() + 1 if idx > 0 else 1)\n\t\thi = min(49, seq[idx + 1].par.Step.eval() - 1 if idx < seq.numBlocks - 1 else 49)'
+    previous_bounded = bounded.replace('1 if idx == 0 else 2 if idx == 1', '10 if idx == 0 else 31 if idx == 1')
+    if original in callback.text:
+        callback.text = callback.text.replace(original, bounded)
+    elif previous_bounded in callback.text:
+        callback.text = callback.text.replace(previous_bounded, bounded)
+    elif bounded not in callback.text:
+        raise ValueError('unexpected StreamDiffusion step clamp; refusing a blind rewrite')
+
+
 def install(root, scripts, backups):
     scripts, backups = Path(scripts), Path(backups)
-    needed = ('oscin3', 'oscin3_callbacks', 'source_morph_pixel', 'morph_controls',
+    needed = ('oscin3', 'oscin3_callbacks', 'source_morph_pixel', 'source_morph', 'morph_controls',
+              'StreamDiffusionTD/parexec_Updatelive',
               'yolo/chopexec3', 'yolo/yolo_server/predictions', 'yolo/yolo_labels', 'over1', 'null3')
     if any(root.op(name) is None for name in needed):
         raise ValueError('this TD network does not match the verified installation profile')
@@ -33,7 +75,7 @@ def install(root, scripts, backups):
     if not hasattr(b.par, 'Enabled'):
         page = b.appendCustomPage('Interaction')
         for name, label, default in [('Enabled', 'Machine invitations and replies', True),
-            ('Controls', 'LLM regulates morph amount / warp', True),
+            ('Controls', 'Speech analysis controls', True),
             ('Messagevisible', 'Show machine caption', True),
             ('Flipframe', 'Flip cached TD camera rows upright', True)]:
             par = page.appendToggle(name, label=label)[0]
@@ -47,7 +89,20 @@ def install(root, scripts, backups):
             par = page.appendFloat(name, label=label)[0]
             par.default, par.val = default, default
             par.min, par.max, par.clampMin, par.clampMax = low, high, True, True
-    for name in ('logic', 'message', 'last_message', 'scene', 'judgement', 'status', 'camera_status', 'notes'):
+    experience = b.appendCustomPage('Experience')
+    for name, label, default in [('Disco', 'Disco palette (flexible)', False),
+            ('Asides', 'Embodied participant challenges', True),
+            ('Cameraenabled', 'Occasional webcam vision', True)]:
+        if b.par[name] is None:
+            p = experience.appendToggle(name, label=label)[0]
+            p.default, p.val = default, default
+    if b.par['Camerafps'] is None:
+        p = experience.appendInt('Camerafps', label='YOLO frame budget (FPS)')[0]
+        p.default, p.val = 15, 15
+        p.min, p.max, p.normMin, p.normMax, p.clampMin, p.clampMax = 5, 60, 5, 60, True, True
+    install_speech_controls(root)
+    b.par.Controls.label = 'Speech analysis controls'
+    for name in ('logic', 'message', 'last_message', 'scene', 'judgement', 'status', 'camera_status', 'profile_status', 'notes'):
         if b.op(name) is None:
             b.create(textDAT, name)
     b.op('logic').text = (scripts / 'td_interactivity.py').read_text(encoding='utf-8')
@@ -57,7 +112,13 @@ def install(root, scripts, backups):
         'YOLO summary -> Agentport once/second; no periodic camera/model calls.\n'
         'Camera requested only by /camera/request; copied cached CHW buffer, JPEG/HTTP off TD thread.\n'
         'No TOP readback added. No images saved. Frameport must match --frame-port.\n'
-        'Enabled disables invitations/replies; Controls disables LLM amount/warp overrides.\n'
+        'Enabled disables invitations/replies; Controls disables speech-driven targets.\n'
+        'morph_controls / Speech: separate Speech Morph/Warp; Manual Morph/Warp never overwritten.\n'
+        'Use Speech Morph/Warp selects the shader source; Auto breathing still has priority.\n'
+        'Speech drives both Step sliders: exactly two blocks; Step 1 >= 1; Step 2 >= 2 and > Step 1.\n'
+        'Targets use preservation/transform intent/specificity; interpolate over 8 seconds by default.\n'
+        'Morph is bounded to .5..1 in manual, speech and breathing modes; stalls cannot fast-forward it.\n'
+        'Reply-only/nonvisual/invalid messages do not reset targets; no .12 morph floor.\n'
         'Messagevisible hides captions; Flipframe converts bottom-up TD rows to upright JPEG.\n'
         'Source sampling and fixed crop stay unchanged; generated branch alone may warp.\n'
         'Judgements describe intent, not identity or truth. Live modifications require project saving.\n')

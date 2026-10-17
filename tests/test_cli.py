@@ -40,7 +40,13 @@ class CLITests(unittest.TestCase):
             self.assertEqual(len(list(Path(directory).glob('*.jsonl'))), 1)
         self.assertEqual(seen[0].bridge.client._sock.fileno(), -1)
 
-    def test_cli_dynamic_default_without_trigger(self):
+    def test_cli_explicit_dynamic_without_trigger(self):
+        self._assert_cli_service(dynamic=True)
+
+    def test_cli_default_waits_for_boundary_even_past_debounce(self):
+        self._assert_cli_service(dynamic=False)
+
+    def _assert_cli_service(self, dynamic):
         import socket
         from pythonosc.udp_client import SimpleUDPClient
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -51,7 +57,8 @@ class CLITests(unittest.TestCase):
             '--listen-host', '127.0.0.1', '--listen-port', str(port),
             '--output-host', '127.0.0.1', '--output-port', str(self.sink.server_address[1]),
             '--ollama-url', f'http://127.0.0.1:{self.http.server_port}',
-            '--debounce', '0.05', '--update-interval', '0.1'],
+            '--debounce', '0.05', '--update-interval', '0.1',
+            *(['--dynamic'] if dynamic else [])],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         observed = []
         reader = None
@@ -75,6 +82,13 @@ class CLITests(unittest.TestCase):
             self.assertIsNone(proc.poll(), 'service exited before receiving text')
             sender = SimpleUDPClient('127.0.0.1', port)
             sender.send_message('/transcription', 'visual thought without trigger')
+            if not dynamic:
+                self.assertEqual(self.received.get(timeout=1),
+                    ('/transcription', ('visual thought without trigger',)))
+                with self.assertRaises(queue.Empty):
+                    self.requests.get(timeout=.25)
+                sender.send_message('/trigger', 1)
+                self.assertEqual(self.received.get(timeout=1), ('/trigger', (1,)))
             sender.close()
             self.assertEqual(self.received.get(timeout=3)[1], ('A metal flower turns.',))
         finally:

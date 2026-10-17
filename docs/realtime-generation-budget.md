@@ -1,0 +1,17 @@
+# Realtime Ollama generation budget
+
+`FinalTurnBridge(agent)`, its `BoundaryBridge` subclass, and default boundary-speech `InteractiveBridge` requests inherit `agent.timeout` as their total generation budget. The CLI inherits `--timeout` (120 seconds by default). An unset constructor budget is `None`; `--generation-budget SECONDS` or `generation_budget=SECONDS` explicitly selects another finite positive number.
+
+The previous five-second default was a regression: measured healthy interactive requests exceeded it. The isolated HTTP/UDP test in `tests/test_budget_defaults.py` reproduces rejection of a six-second progressive response before the correction and acceptance afterward, while raw subtitles continue immediately. An explicit five-second budget remains supported and tested, but it is not an appropriate universal default. A total latency cap is not a no-progress detector and does not diagnose or cure an intermittent decode stall.
+
+This setting does not reduce the model, context, speech history, or prediction settings. The ordinary `Agent.timeout` still applies as an additional socket timeout; explicit legacy dynamic/FIFO and direct uncontrolled Agent/MediatingAgent calls retain their existing timeout behavior. One control/deadline spans an interactive text decision and any optional camera refinement; controlled timeout/cancellation is never replaced by a successful fallback decision. Idle engagement requests use a separate labelled lane and cannot become visual prompts or completed speech.
+
+Realtime HTTP requests ask Ollama for streaming responses but buffer all text privately. Only a completed, still-current response can produce a visual prompt/trigger or enter generated history. The final stream record supplies token counts and durations. No partial visual prompt is transmitted.
+
+The budget is measured with a monotonic deadline across connection, headers and body reads, not renewed per token. A socket timeout and one joined deadline watchdog enforce read stalls and continuously arriving token streams. New speech/finals supersede the active request on the same channel; reset and shutdown also shut down and close the HTTP socket. This lets Ollama detect the disconnected client and cancel backend generation; backend cancellation is server-dependent and does not diagnose or fix GPU stalls. There are no automatic retries or background inference request threads.
+
+Journal telemetry includes `http_elapsed` and `generation_status`: `complete`, `timeout`, `superseded`, `reset`, or `shutdown`. Deadline expiration produces an error with `GenerationTimeout`; obsolete/cancelled requests produce discard events.
+
+Injected legacy `transport(url, payload, timeout)` functions remain supported synchronously. Arbitrary injected blocking code cannot be safely preempted; it must implement its own bound, or explicitly accept a `control` keyword and honor `control.check()`/cancellation. The default real HTTP transport is socket-cancellable. Hostname resolution uses the Python HTTP connection implementation; the tested realtime target is the local Ollama address, not a guarantee about a stalled external DNS resolver.
+
+Verification: `python -m pytest tests/test_generation_budget.py -q` uses an isolated loopback HTTP server, not the running Ollama service. It covers blocked headers/body, progressive tokens crossing the deadline, supersede/reset/shutdown, server-observed disconnect, no partial output/history commit, subsequent newest output, final telemetry and both realtime bridge types.

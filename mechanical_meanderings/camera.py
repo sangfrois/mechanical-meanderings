@@ -9,6 +9,19 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
+def validate_frame(image):
+    """Bound transport size before decoding; never include image data in errors."""
+    if not isinstance(image, str) or not 1 <= len(image) <= FrameInbox.MAX_BODY:
+        raise ValueError('invalid camera frame')
+    try:
+        raw = base64.b64decode(image, validate=True)
+    except (ValueError, binascii.Error):
+        raise ValueError('invalid camera encoding') from None
+    if not 32 <= len(raw) <= FrameInbox.MAX_JPEG or not raw.startswith(b'\xff\xd8\xff') or not raw.endswith(b'\xff\xd9'):
+        raise ValueError('invalid JPEG transport')
+    return image
+
+
 class FrameInbox:
     MAX_BODY = 600_000
     MAX_JPEG = 400_000
@@ -50,9 +63,7 @@ class FrameInbox:
                     request_id, image = value.get('request_id'), value.get('image')
                     if not isinstance(request_id, str) or len(request_id) > 64 or not isinstance(image, str):
                         raise ValueError('invalid frame fields')
-                    raw = base64.b64decode(image, validate=True)
-                    if not 32 <= len(raw) <= owner.MAX_JPEG or not raw.startswith(b'\xff\xd8\xff') or not raw.endswith(b'\xff\xd9'):
-                        raise ValueError('invalid JPEG transport')
+                    validate_frame(image)
                 except (ValueError, binascii.Error, UnicodeError, TimeoutError):
                     self.answer(400)
                     return
@@ -93,7 +104,7 @@ class FrameInbox:
             with self.condition:
                 self.condition.wait_for(lambda: self.image is not None or self.pending != request_id or self.closed,
                     max(0., self.deadline - time.monotonic()))
-                if self.image is None or self.pending != request_id or self.closed:
+                if self.image is None or self.pending != request_id or self.closed or time.monotonic() >= self.deadline:
                     raise TimeoutError('no current camera frame')
                 return self.image
         finally:

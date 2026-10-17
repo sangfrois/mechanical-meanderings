@@ -14,7 +14,7 @@ from test_engagement import Clock, scene
 
 
 @contextmanager
-def harness(transport, **options):
+def harness(transport, *, agent_options=None, **options):
     from mechanical_meanderings.interactive import InteractiveBridge
     received = queue.Queue()
     events = queue.Queue()
@@ -23,7 +23,7 @@ def harness(transport, **options):
     sink = BlockingOSCUDPServer(('127.0.0.1', 0), dispatcher)
     receiver = threading.Thread(target=sink.serve_forever, daemon=True)
     receiver.start()
-    agent = MediatingAgent('visual style', transport=transport, timeout=2)
+    agent = MediatingAgent('visual style', transport=transport, timeout=2, **(agent_options or {}))
     bridge = InteractiveBridge(agent, listen_host='127.0.0.1', listen_port=0,
         output_host='127.0.0.1', output_port=sink.server_address[1], output_address='/txt2img',
         dynamic=True, debounce=.01, update_interval=.05, on_event=events.put,
@@ -91,7 +91,7 @@ def test_speech_during_yolo_invitation_inference_discards_invitation():
     requests = []
     def transport(url, payload, timeout):
         requests.append(payload)
-        if payload['format'].get('required') == ['message', 'visible_detail']:
+        if 'message' in payload['format'].get('properties', {}):
             began.set()
             assert release.wait(1)
             return {'message': {'content': json.dumps(dict(message='Speak into the microphone!', visible_detail=''))}}
@@ -131,7 +131,7 @@ def test_yolo_invitation_uses_detected_object_without_camera():
         # A generic model answer must not erase the actual detector grounding.
         return {'message': {'content': json.dumps(dict(
             message='Speak into the microphone. Change your reflection.', visible_detail=''))}}
-    with harness(transport, engagement=state,
+    with harness(transport, engagement=state, asides_enabled=False,
             frame_provider=lambda: frames.append(True) or 'synthetic-frame') as (_, sender, received, events):
         result = event_of(events, 'result')
         assert not frames

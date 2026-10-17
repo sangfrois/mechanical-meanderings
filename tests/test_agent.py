@@ -11,10 +11,21 @@ class AgentTests(unittest.TestCase):
         agent = Agent(system_prompt='visual instructions', transport=transport)
         self.assertEqual(agent.generate('a bird'), 'A brass bird opens its wings.')
         url, payload, timeout = calls[0]
-        self.assertEqual(url, 'http://localhost:11434/api/chat')
+        self.assertEqual(url, 'http://127.0.0.1:11434/api/chat')
         self.assertEqual(payload, {'model': 'gemma4:12b', 'think': False, 'stream': False,
             'messages': [{'role': 'system', 'content': 'visual instructions'}, {'role': 'user', 'content': 'a bird'}]})
         self.assertGreater(timeout, 0)
+
+    def test_explicit_ollama_urls_are_not_rewritten(self):
+        from mechanical_meanderings import Agent
+        for url in ('http://localhost:11434', 'https://remote.example:443'):
+            calls = []
+            def transport(target, payload, timeout):
+                calls.append(target)
+                return {'message': {'content': 'visual'}}
+            agent = Agent('system', transport=transport, ollama_url=url)
+            agent.generate('speech')
+            self.assertEqual(calls, [url + '/api/chat'])
 
     def test_safe_output_normalization(self):
         from mechanical_meanderings import Agent

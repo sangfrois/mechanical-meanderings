@@ -21,4 +21,4 @@ mechanical-meanderings = "mechanical_meanderings.__main__:main"
 include = ["mechanical_meanderings*"]
 
 [tool.setuptools.package-data]
-mechanical_meanderings = ["system.txt"]
+mechanical_meanderings = ["system.txt", "prompts/*.md"]

@@ -107,7 +107,7 @@ Use a wide terminal (130 columns recommended). The left panel scrolls; Tab moves
 - **Temperature, top-p, top-k, repeat penalty, seed, output budget, context tokens:** blank means no Ollama override, not a known effective default. The playful presets stage four sampling fields only; Apply is still required. Context/budget/seed/history are preserved when selecting a preset, including “Model defaults”.
 - **History:** successful input/output pairs per channel, distinct from the token window. Shrinking it takes effect on the next request; increasing it cannot recover discarded turns. Debounce and start interval can also be tuned live.
 - **Ctrl+P / Pause:** hold new generation starts; raw forwarding and an in-flight request continue. **Ctrl+R / Reset:** clear history and pending work and suppress an obsolete in-flight output; settings remain unchanged.
-- **Ctrl+Q:** stop the receiver and worker, close UDP and the journal. A running HTTP request cannot be cancelled immediately; shutdown can wait for its configured timeout (default 120 seconds).
+- **Ctrl+Q:** stop the receiver and worker, close UDP and the journal. Default boundary/final/interactive requests close their HTTP socket on shutdown. Their whole-request budget inherits the configured HTTP timeout (default 120 seconds); `--generation-budget SECONDS` explicitly overrides it. Explicit legacy dynamic/FIFO requests retain their configured timeout. Injected blocking transports must enforce their own bound.
 
 Trajectory view: at most 300 lines, a 256-event display queue with visible eviction count, and the last 120 successful latency samples. Channel and input sizes are bounded. JSONL in Git-ignored `sessions/` records inputs, settings, starts, outputs, errors, resets, and runtime metadata before display, with flush + fsync per record. Display evictions do not delete disk records. Files contain private speech and grow until the session ends; archive/delete them according to your retention policy. Disk-write failure is latched visibly and subsequent records are **not guaranteed durable**. There is no replay/resume or automatic log rotation. Headless mode can opt in with `--record --session-dir PATH`.
 
@@ -242,8 +242,8 @@ Leave `--samplerate` off in ASIO mode to adopt the existing Scarlett clock. Keep
 | `--threshold-db -42` | Default speech gate. Raise toward zero for noise; lower for quiet speech. Calibrate from real levels. |
 | `--hangover 0.7` | Silence needed to finish an utterance; reducing it can split words/ideas more aggressively. |
 | `--max-utt 20` | Maximum utterance duration before forced split; not the LLM refresh interval. |
-| `--partial 0.7` | Re-read open speech periodically. Keep >0 for dynamic prompting before pauses. |
-| `--phrase-timeout 3` | STT phrase boundary; does not gate the default dynamic LLM mode. |
+| `--partial 0.7` | Re-read open speech periodically for immediate live subtitles; default visual prompting still waits for closure. |
+| `--phrase-timeout 3` | STT phrase boundary; gates default visual generation, including interactive mode. |
 | `--no-meter` | Hide the live audio meter. |
 
 ### Subtitle pages versus full transcripts
@@ -252,9 +252,36 @@ The current rt-stt parser uses `--line-chars` (default 42), `--lines` (default 2
 
 The agent receives the actual `/transcription` page snapshots, not the complete JSONL transcript. Dynamic sampling and prior turns provide context, but words that scroll past between sampled snapshots can be missed. Increasing the display page dimensions changes subtitle layout too. There is currently no separate lossless full-transcript input stream in this bridge; don't describe its memory as an exhaustive recording of everything spoken.
 
-## 4. Dynamic update rate
+## 4. Speech scheduling
 
-Default mode does NOT wait for `/trigger`.
+Default noninteractive and `--interactive` modes wait for existing `/trigger 1` phrase closure,
+with no debounce-triggered generation. Optional `/speech/activity 1` vetoes
+generation until activity returns to 0. Raw subtitles/clears/triggers forward
+immediately and independently of inference (enabled by default in this mode).
+Observed growing pages are accumulated as best-effort chronological speech
+context, not authoritative full finals. Display drains after closure never
+schedule a new turn. Keep the Gemma model and context/history flags unchanged.
+See [boundary behavior, limitations and verified command](docs/final-turn-feedback.md).
+
+Both default modes keep actual observed speech in an independent bounded ledger,
+not generated prompts/captions masquerading as user input. Exact post-closure
+redraws still forward but do not carry the old page into the next phrase.
+The default realtime budget inherits `--timeout` (120 seconds unless changed).
+`--generation-budget SECONDS` explicitly bounds each complete request; in interactive
+mode the same deadline spans text and optional camera refinement. Raw OSC receipt
+does not wait for model inference or its lock, so a stalled request cannot hold
+the transcription lane. A total budget is not a no-progress detector: a short
+explicit budget can reject healthy progressive output. It does not diagnose or
+cure an Ollama decoding stall.
+
+The checked-out rt-stt has internal VAD but no live activity-start OSC packet;
+therefore this fixes timer-based mid-speech scheduling, not a promise of
+perfect physical-speech detection from delayed phrase closures. Ambiguous
+post-closure previews fail closed until a new opening signal.
+
+### Legacy dynamic update rate (`--dynamic`)
+
+Explicit `--dynamic` does NOT wait for `/trigger` and may generate mid-speech.
 
 - `--debounce 0.6`: a short pause in changing text makes a pending snapshot eligible.
 - `--update-interval 2`: continuous changes become eligible after this interval; also spaces generation starts per channel.
@@ -264,7 +291,20 @@ Default mode does NOT wait for `/trigger`.
 
 Examples: `--update-interval 1 --debounce 0.3` for faster reactions, `--update-interval 4 --debounce 1` for less churn. These are tuning suggestions, not measured throughput guarantees. Whisper, Gemma, and diffusion may compete for GPU memory/time.
 
-`--phrase-trigger` restores legacy phrase-end behavior using `/trigger 1`. Only that legacy mode uses `--queue-size` (default 8); it is not the dynamic mode's backlog control.
+`--phrase-trigger` restores legacy phrase-end behavior using `/trigger 1`. Only that legacy mode uses `--queue-size` (default 8); it is not boundary/dynamic backlog control.
+
+### Opt-in completed-turn feedback
+
+`--final-turn --forward-raw` separates immediate raw transcription forwarding
+from latest-only completed-speech visual generation. Partials do not generate;
+newer speech rejects obsolete in-flight outputs without losing completed input
+context. Keep your model/context/history flags unchanged. See
+[final-turn protocol, exact command, timing metrics, and offline verification](docs/final-turn-feedback.md).
+**Upstream prerequisite:** the checked-out rt-stt sender sends phrase-end
+`/trigger 1` but only subtitle pages over `/transcription`, not authoritative
+full final speech. Supply atomic `/final FULL_TEXT` from an upstream adapter
+outside TD before assuming lossless utterance-final behavior. No sender/TD
+compatibility or runtime launch is implied.
 
 ## 5. Context size and participant boundaries
 
@@ -325,7 +365,7 @@ From this repository, reset using the existing Python environment:
 - `--timeout 120`: maximum HTTP wait in seconds, not a cadence setting.
 - `--system-prompt path/to/instruction.txt`: replace the packaged instruction at startup. Restart to load edits. The runtime still caps output at 20 words.
 - `--output-address /txt2img`: any desired OSC output address. `/transcription` is a special drop-in choice whose completion address is `/trigger`; other choices append `/trigger`.
-- Omit `--forward-raw` if the destination should receive only generated prompts.
+- Legacy modes: omit `--forward-raw` for generated prompts only. Default boundary mode always forwards raw input.
 
 Another OSC-capable application can replace TD or rt-stt. Dynamic input is a string at `/transcription`, or `/chN/transcription` with channel mode. No trigger is required.
 
@@ -350,7 +390,7 @@ Ctrl+C stops a foreground service. Closing a log follower does not stop the unde
 | Symptom | Check |
 |---|---|
 | No prompts | rt-stt destination 9000, agent input 9000, TD input 9001; live partials enabled; speech above gate. |
-| Waiting forever during speech | Do not use `--phrase-trigger` for dynamic use. |
+| Waiting during speech | Expected in default boundary mode; check `/trigger 1`. Use explicit `--dynamic` only if mid-speech updates are wanted. |
 | Log flood | Remove `--verbose`; don't follow the old packet-heavy service.log. |
 | Address ValueError in Git Bash | Prefix launch with `MSYS_NO_PATHCONV=1`. |
 | Bind/OSError | Another agent or TD may own the input port. Stop the conflicting receiver. |
@@ -377,7 +417,13 @@ Real local Gemma -> OSC -> TD prompt-parameter read-back has been verified, incl
 
 ## 10. Optional mediated speech and selective engagement
 
-`--interactive` keeps the existing serial, latest-text OSC route but separates three outputs:
+### Edit the invitation without editing Python
+
+The complete invitation system prompt is [mechanical_meanderings/prompts/invite.md](mechanical_meanderings/prompts/invite.md). It covers basic onboarding, snark, profanity, language, optional movement, repetition and typography, with no hidden personality appended. The updated bridge rereads it for every invitation. The defaults ask for plain mic-to-image instructions with a dry jab, not poetry, a judgement of the visitor's shyness or a compulsory movement task.
+
+Use `--invite-prompt PATH` to select a complete replacement. `--print-invite-prompt` prints the exact effective system message without Ollama or OSC. `--preview-invite --invitation-language "French (Quebec)" --invite-count 4` is an opt-in resident-model wording test with no OSC/camera; it records rejected samples too. The Python update needs one operator-owned relaunch; subsequent prompt-file edits do not. Visual `--system-prompt`, speech history, model/context settings and TD are unchanged. See [the invitation editing guide](docs/invitation-prompting.md) for section-by-section controls, preview safety and the remaining display/runtime limits.
+
+`--interactive` defaults to serial, latest-completed speech scheduling (not partial-text debounce) and separates three outputs:
 
 - `/txt2img`: a visual prompt, at most 20 words, only when the model judges the words to be visual input.
 - `/mediation`: structured intent category, direct-address confidence, visual specificity, transformation intent, preservation preference, and bounded morph amount/warp controls. These are model interpretations, not facts about a participant.
@@ -393,9 +439,9 @@ The central compositor samples the base source at its original coordinates. Its 
 
 TD sends a small YOLO summary once per second, not a camera frame: fresh detector sequence, person count and confident object labels. Object and pose person counts are combined by maximum, not added. Tracker IDs are excluded. Repeated/frozen detector sequences cannot refresh presence.
 
-Default invitation conditions are 20 seconds without new transcript activity, 8 seconds of sustained fresh presence, and a 90-second invitation cooldown. The budget is two invitations per occupancy, reset after 5 seconds of an empty scene. Summaries older than 3 seconds are rejected. Speech and queued visual work take priority; pause, reset, departure and renewed speech invalidate in-flight invitations. `/speech/activity` with 0/1 can provide a true VAD signal; without it, silence is inferred from transcript changes, not measured microphone audio.
+Default interactive CLI invitation conditions are 45 seconds without new transcript activity, 8 seconds of sustained fresh presence, and a 180-second invitation cooldown. The budget is one invitation per occupancy, reset after 5 seconds of an empty scene; these remain explicit operator flags. Summaries older than 3 seconds are rejected. Speech and queued visual work take priority; pause, reset, departure and renewed speech invalidate in-flight invitations. `/speech/activity` with 0/1 can provide a true VAD signal; without it, silence is inferred from transcript changes, not measured microphone audio.
 
-Live invitations use YOLO metadata only: no `/camera/request`, JPEG or vision inference. The model receives fresh scene labels, person count, recent speech and recent invitations. Known object labels at confidence >= 0.60 become concrete transformation suggestions; e.g. a detected chair can produce `Say “floating chair” to the mic.` or `Dis «chaise en or» au micro.` Detector spelling is preserved, with a compact French display-name mapping. If the model ignores the detector, repeats itself or rambles, an authored short suggestion keeps an actually detected noun. The object list is rechecked immediately before sending, so an object that left during inference is not retained in the invitation. With no reliable object, the instruction is generic. Detector-only data is never treated as clothing, identity, ownership or a gesture.
+Live invitations use YOLO metadata only: no `/camera/request`, JPEG or vision inference. The model receives fresh scene labels, person count, recent speech and recent invitations. With the normal Asides-enabled route, first contact and continuing play use `challenge` captions: microphone onboarding with an attitude, not assigned image subjects or mandatory gestures. With Asides off, the legacy short-object lane remains: known labels at confidence >= 0.60 can become quoted transformation suggestions, with a compact French display-name mapping and a complete authored fallback for invalid output. That legacy object list is rechecked before sending. Detector-only data is never treated as clothing, identity, ownership or a gesture.
 
 The loopback port-9012 frame inbox remains for explicit legacy camera diagnostics, not routine invitations. TD's optional camera callback copies the cached YOLO CPU buffer and JPEG-encodes/uploads off its main thread; no new TOP readback is introduced and no camera image is saved in scene/history state.
 
@@ -415,13 +461,13 @@ The currently handed-off background copy, if running, already owns port 9000; do
 
 At `/project1/interactivity`, `Enabled` disables invitations/replies; `Controls` disables LLM overrides of morph amount/warp; `Messagevisible` hides captions; `Confidence` adjusts detection filtering; `Fontsize` changes the caption. `Flipframe` corrects TD's bottom-up cached camera rows. The caption has a text-only shadow, not a full-frame background dimmer. `Frameport` must match `--frame-port`; `Agentport` must match the bridge input.
 
-Timing flags are `--idle-after`, `--presence-dwell`, `--invite-cooldown`, `--scene-timeout`, `--absence-reset`, `--max-invitations`, `--reply-cooldown`, and `--message-ttl` (positive, at most 60 seconds). `--invitation-language auto` mixes English with French (one French request per three invitation requests); an explicit language locks the wording. Send `/reset` to port 9000 to clear histories, pending work, invitation reservations/budget and the machine caption.
+Timing flags are `--idle-after`, `--presence-dwell`, `--invite-cooldown`, `--scene-timeout`, `--absence-reset`, `--max-invitations`, `--reply-cooldown`, and `--message-ttl` (positive, at most 60 seconds). `--invitation-language auto` selects Quebec French for challenges; the legacy short-object lane mixes English and French. An explicit language locks the wording. Send `/reset` to port 9000 to clear histories, pending work, invitation reservations/budget and the machine caption.
 
-Invitations are direct microphone instructions, 3–7 words and at most 48 characters, not poetic riddles. Object-grounded invitations explicitly suggest the words to say. Overlong, repeated or unclear model text is replaced by a complete authored instruction, not cut into a fragment. The TD caption receiver independently enforces the same size limit. Each new invitation advances one of six safe caption positions and type treatments: Cooper Black, Bauhaus, Impact, Comic Sans, Showcard and Agency, with varied size, casing, tracking, colour and deliberate line breaks. The position stays still while the invitation is visible. French accents are preserved; there is no `MIRROR /` prefix. Replies retain a quieter centred style. No new camera readback or whole-frame dimmer is added.
+First-contact and continuing-play invitations are displayed as `challenge`, at most 24 words / 160 characters, with a clear microphone instruction. Invalid or repeated challenges are rejected, not replaced with a slogan or truncated. The older `invitation` lane retains its 3–7-word / 48-character validator and complete mic/object fallback. The model selects bounded typography for captions; it is not a fixed six-font rotation. No new camera readback or whole-frame dimmer is added. Prompt editing cannot change the TD wire limits; the editing guide separates those limits from wording controls.
 
 The YOLO-grounded workstation service writes `G:/mechanical-meanderings/runtime/interactive-service-yolo.log`; previous logs are preserved. `python -m scripts.yolo_invitation_smoke --instance <live-TD-instance-id> --output <private-json-path> --show` reads actual live detector metadata, checks that its sequence advances, generates real English/French local-model outputs and optionally displays them over OSC. It requests no image and opens no competing production listener. Without a reliable non-person object in view, this check correctly produces generic wording; synthetic object fixtures in the unit tests verify object-specific behavior separately. The older `scripts/invitation_smoke.py` is an explicit camera diagnostic; run that one only while its callback port is free.
 
-The 2-second scheduling interval is not guaranteed model throughput. A real workstation smoke measured speech decisions around 9–25 seconds per request, including cold/context initialization, and a camera-grounded invitation around 5.5 seconds. Actual load and retained context affect latency.
+Debounce/update-interval no longer schedule default interactive speech; explicit `--dynamic` restores the old partial-text behavior. Earlier workstation smokes measured 9–25-second decisions and a 5.5-second camera-grounded invitation. The initial five-second realtime default was removed because it rejected healthy responses; the default now inherits the existing HTTP timeout, while an explicit smaller budget remains available. Neither deadline enforcement nor non-reproducing diagnostic batches establish that decoding is faster. Retain the operator's chosen Gemma model, context and history. Python source changes require an operator-owned relaunch; no running service is hot-patched. Once the updated bridge is loaded, its selected invitation prompt file is reread on each invitation.
 
 ### Reproducible verification
 
